@@ -21,12 +21,8 @@ namespace Nethermind.Runner.Config
     public class InitConfig : IInitConfig
     {
         public bool EnableUnsecuredDevWallet { get; set; } = false;
-
         public bool KeepDevWalletInMemory { get; set; } = false;
-
-        
         public bool JsonRpcEnabled { get; set; } = false;
-
         public bool WebSocketsEnabled { get; set; } = false;
         public bool DiscoveryEnabled { get; set; } = true;
         public bool SynchronizationEnabled { get; set; } = true;
@@ -35,25 +31,18 @@ namespace Nethermind.Runner.Config
         public bool IsMining { get; set; } = false;
         public string HttpHost { get; set; } = "127.0.0.1";
         public int HttpPort { get; set; } = 8545;
-        public int DiscoveryPort { get; set; } = 30312;
-        public int P2PPort { get; set; } = 30312;
+        public int DiscoveryPort { get; set; } = 30303;
+        public int P2PPort { get; set; } = 30303;
         public string ChainSpecPath { get; set; }
         public string ChainSpecFormat { get; set; } = "chainspec";
         public string BaseDbPath { get; set; } = "db";
         public string LogFileName { get; set; } = "log.txt";
         public string GenesisHash { get; set; }
-
-        public string[] JsonRpcEnabledModules { get; set; } = {"Clique", "Eth", "Net", "Web3", "Db", "Debug", "TxPool"};
-
-        public bool RemovingLogFilesEnabled { get; set; }
-
-        //in case of null, the path is set to ExecutingAssembly.Location\logs
+        public string StaticNodesPath { get; set; } = "Data/static-nodes.json";
+        public string[] JsonRpcEnabledModules { get; set; } = {"Clique", "Db", "Debug", "Eth", "Net", "Trace", "TxPool", "Web3"};
         public string LogDirectory { get; set; } = null;
-        public bool LogPerfStatsOnDebug { get; set; } = false;
         public bool StoreTraces { get; set; } = false;
         public bool StoreReceipts { get; set; } = false;
-        public int ObsoletePendingTransactionInterval { get; set; } = 15;
-        public int RemovePendingTransactionInterval { get; set; } = 600;
-        public int PeerNotificationThreshold { get; set; } = 5;
+        
     }
 }

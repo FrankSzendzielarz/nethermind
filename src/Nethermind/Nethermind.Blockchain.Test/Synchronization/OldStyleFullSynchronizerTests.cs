@@ -51,7 +51,6 @@ namespace Nethermind.Blockchain.Test.Synchronization
             _receiptsDb = new MemDb();
             _receiptStorage = Substitute.For<IReceiptStorage>();
             SyncConfig quickConfig = new SyncConfig();
-            quickConfig.SyncTimerInterval = 100;
             quickConfig.FastSync = false;
 
             ISealValidator sealValidator = Build.A.SealValidator.ThatAlwaysReturnsTrue.TestObject;
@@ -59,7 +58,7 @@ namespace Nethermind.Blockchain.Test.Synchronization
             ITxValidator txValidator = Build.A.TransactionValidator.ThatAlwaysReturnsTrue.TestObject;
 
             var stats = new NodeStatsManager(new StatsConfig(), LimboLogs.Instance);
-            _pool = new EthSyncPeerPool(_blockTree, stats, quickConfig, LimboLogs.Instance);
+            _pool = new EthSyncPeerPool(_blockTree, stats, quickConfig, 25, LimboLogs.Instance);
             _synchronizer = new Synchronizer(MainNetSpecProvider.Instance, _blockTree, NullReceiptStorage.Instance, blockValidator, sealValidator, _pool, quickConfig, Substitute.For<INodeDataDownloader>(), LimboLogs.Instance);
             _syncServer = new SyncServer(_stateDb, _codeDb, _blockTree, _receiptStorage, sealValidator, _pool, _synchronizer, quickConfig, LimboLogs.Instance);
         }

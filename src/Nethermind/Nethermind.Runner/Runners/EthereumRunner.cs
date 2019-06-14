@@ -17,6 +17,7 @@
  */
 
 using System;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Reflection;
@@ -72,6 +73,7 @@ using Nethermind.Network.Discovery.Serializers;
 using Nethermind.Network.P2P;
 using Nethermind.Network.Rlpx;
 using Nethermind.Network.Rlpx.Handshake;
+using Nethermind.Network.StaticNodes;
 using Nethermind.Runner.Config;
 using Nethermind.Stats;
 using Nethermind.Store;
@@ -91,6 +93,7 @@ namespace Nethermind.Runner.Runners
 
         private IRpcModuleProvider _rpcModuleProvider;
         private IConfigProvider _configProvider;
+        private ITxPoolConfig _txPoolConfig;
         private IInitConfig _initConfig;
         private INetworkHelper _networkHelper;
 
@@ -137,7 +140,8 @@ namespace Nethermind.Runner.Runners
         private HiveRunner _hiveRunner;
         private ISessionMonitor _sessionMonitor;
         private ISyncConfig _syncConfig;
-
+        public IEnode Enode => _enode;
+        private IStaticNodesManager _staticNodesManager;
         public const string DiscoveryNodesDbPath = "discoveryNodes";
         public const string PeersDbPath = "peers";
 
@@ -150,7 +154,8 @@ namespace Nethermind.Runner.Runners
             _configProvider = configurationProvider ?? throw new ArgumentNullException(nameof(configurationProvider));
             _rpcModuleProvider = rpcModuleProvider ?? throw new ArgumentNullException(nameof(rpcModuleProvider));
             _initConfig = configurationProvider.GetConfig<IInitConfig>();
-            _perfService = new PerfService(_logManager) {LogOnDebug = _initConfig.LogPerfStatsOnDebug};
+            _txPoolConfig = configurationProvider.GetConfig<ITxPoolConfig>();
+            _perfService = new PerfService(_logManager);
             _networkHelper = new NetworkHelper(_logger);
         }
 
@@ -161,14 +166,10 @@ namespace Nethermind.Runner.Runners
 
             SetupKeyStore();
             LoadChainSpec();
-            UpdateNetworkConfig();
+            UpdateDiscoveryConfig();
             await InitBlockchain();
             RegisterJsonRpcModules();
             InitEthStats();
-            if (HiveEnabled)
-            {
-                await InitHive();
-            }
 
             if (_logger.IsDebug) _logger.Debug("Ethereum initialization completed");
         }
@@ -196,6 +197,7 @@ namespace Nethermind.Runner.Runners
             switch (_initConfig)
             {
                 case var _ when HiveEnabled:
+                    // todo: use the keystore wallet here
                     _wallet = new HiveWallet();
                     break;
                 case var config when config.EnableUnsecuredDevWallet && config.KeepDevWalletInMemory:
@@ -251,62 +253,60 @@ namespace Nethermind.Runner.Runners
                 filterManager,
                 _wallet,
                 rpcState.TransactionProcessor);
-            
+
             AlternativeChain debugChain = new AlternativeChain(_blockTree, _blockValidator, _rewardCalculator, _specProvider, rpcDbProvider, _recoveryStep, _logManager, NullTxPool.Instance, NullReceiptStorage.Instance);
             IReadOnlyDbProvider debugDbProvider = new ReadOnlyDbProvider(_dbProvider, false);
             var debugBridge = new DebugBridge(_configProvider, debugDbProvider, tracer, debugChain.Processor);
 
-            EthModule module = new EthModule(_jsonSerializer, _configProvider, _logManager, blockchainBridge);
+            EthModule module = new EthModule(_logManager, blockchainBridge);
             _rpcModuleProvider.Register<IEthModule>(module);
 
-            DebugModule debugModule = new DebugModule(_configProvider, _logManager, debugBridge, _jsonSerializer);
+            DebugModule debugModule = new DebugModule(_logManager, debugBridge);
             _rpcModuleProvider.Register<IDebugModule>(debugModule);
 
             if (_sealValidator is CliqueSealValidator)
             {
-                CliqueModule cliqueModule = new CliqueModule(_configProvider, _logManager, _jsonSerializer, new CliqueBridge(_blockProducer as ICliqueBlockProducer, _snapshotManager, _blockTree));
+                CliqueModule cliqueModule = new CliqueModule(_logManager, new CliqueBridge(_blockProducer as ICliqueBlockProducer, _snapshotManager, _blockTree));
                 _rpcModuleProvider.Register<ICliqueModule>(cliqueModule);
             }
 
             if (_initConfig.EnableUnsecuredDevWallet)
             {
                 PersonalBridge personalBridge = new PersonalBridge(_wallet);
-                PersonalModule personalModule = new PersonalModule(personalBridge, _configProvider, _logManager, _jsonSerializer);
+                PersonalModule personalModule = new PersonalModule(personalBridge, _logManager);
                 _rpcModuleProvider.Register<IPersonalModule>(personalModule);
             }
 
-            AdminModule adminModule = new AdminModule(_configProvider, _logManager, _jsonSerializer);
+            AdminModule adminModule = new AdminModule(_logManager, _peerManager, _staticNodesManager);
             _rpcModuleProvider.Register<IAdminModule>(adminModule);
 
-            TxPoolModule txPoolModule = new TxPoolModule(_configProvider, _logManager, _jsonSerializer, blockchainBridge);
+            TxPoolModule txPoolModule = new TxPoolModule(_logManager, blockchainBridge);
             _rpcModuleProvider.Register<ITxPoolModule>(txPoolModule);
 
-            NetModule netModule = new NetModule(_configProvider, _logManager, _jsonSerializer, new NetBridge(_enode, _syncServer, _peerManager));
+            NetModule netModule = new NetModule(_logManager, new NetBridge(_enode, _syncServer, _peerManager));
             _rpcModuleProvider.Register<INetModule>(netModule);
 
-            TraceModule traceModule = new TraceModule(_configProvider, _logManager, _jsonSerializer, tracer);
+            TraceModule traceModule = new TraceModule(_logManager, tracer);
             _rpcModuleProvider.Register<ITraceModule>(traceModule);
         }
 
-        private void UpdateNetworkConfig()
+        private void UpdateDiscoveryConfig()
         {
             var localHost = _networkHelper.GetLocalIp()?.ToString() ?? "127.0.0.1";
-            var networkConfig = _configProvider.GetConfig<INetworkConfig>();
-            networkConfig.MasterExternalIp = localHost;
-            networkConfig.MasterHost = localHost;
-            if (networkConfig.Bootnodes != string.Empty)
+            var discoveryConfig = _configProvider.GetConfig<IDiscoveryConfig>();
+            discoveryConfig.MasterExternalIp = localHost;
+            discoveryConfig.MasterHost = localHost;
+            if (discoveryConfig.Bootnodes != string.Empty)
             {
                 if (_chainSpec.Bootnodes.Length != 0)
                 {
-                    networkConfig.Bootnodes += "," + string.Join(",", _chainSpec.Bootnodes.Select(bn => bn.ToString()));
+                    discoveryConfig.Bootnodes += "," + string.Join(",", _chainSpec.Bootnodes.Select(bn => bn.ToString()));
                 }
             }
             else
             {
-                networkConfig.Bootnodes = string.Join(",", _chainSpec.Bootnodes.Select(bn => bn.ToString()));
+                discoveryConfig.Bootnodes = string.Join(",", _chainSpec.Bootnodes.Select(bn => bn.ToString()));
             }
-
-            networkConfig.DbBasePath = _initConfig.BaseDbPath;
         }
 
         public async Task StopAsync()
@@ -348,12 +348,17 @@ namespace Nethermind.Runner.Runners
 
         private void LoadChainSpec()
         {
-            _logger.Info($"Loading chain spec from {_initConfig.ChainSpecPath}");
+            if(_logger.IsInfo) _logger.Info($"Loading chain spec from {_initConfig.ChainSpecPath}");
 
             IChainSpecLoader loader = string.Equals(_initConfig.ChainSpecFormat, "ChainSpec", StringComparison.InvariantCultureIgnoreCase)
                 ? (IChainSpecLoader) new ChainSpecLoader(_ethereumJsonSerializer)
                 : new GenesisFileLoader(_ethereumJsonSerializer);
 
+            if (HiveEnabled)
+            {
+                if(_logger.IsInfo) _logger.Info($"HIVE chainspec:{Environment.NewLine}{File.ReadAllText(_initConfig.ChainSpecPath)}");
+            }
+            
             _chainSpec = loader.LoadFromFile(_initConfig.ChainSpecPath);
             _chainSpec.Bootnodes = _chainSpec.Bootnodes?.Where(n => !n.NodeId?.Equals(_nodeKey.PublicKey) ?? false).ToArray() ?? new NetworkNode[0];
         }
@@ -362,13 +367,13 @@ namespace Nethermind.Runner.Runners
         private async Task InitBlockchain()
         {
             _specProvider = new ChainSpecBasedSpecProvider(_chainSpec);
-            
-            Account.AccountStartNonce = _chainSpec.Parameters.AccountStartNonce; 
+
+            Account.AccountStartNonce = _chainSpec.Parameters.AccountStartNonce;
 
             /* sync */
             IDbConfig dbConfig = _configProvider.GetConfig<IDbConfig>();
             _syncConfig = _configProvider.GetConfig<ISyncConfig>();
-            
+
             foreach (PropertyInfo propertyInfo in typeof(IDbConfig).GetProperties())
             {
                 if (_logger.IsDebug) _logger.Debug($"DB {propertyInfo.Name}: {propertyInfo.GetValue(dbConfig)}");
@@ -381,10 +386,10 @@ namespace Nethermind.Runner.Runners
             _ethereumEcdsa = new EthereumEcdsa(_specProvider, _logManager);
             _txPool = new TxPool(
                 new PersistentTxStorage(_dbProvider.PendingTxsDb, _specProvider),
-                new PendingTxThresholdValidator(_initConfig.ObsoletePendingTransactionInterval,
-                    _initConfig.RemovePendingTransactionInterval), new Timestamp(),
-                _ethereumEcdsa, _specProvider, _logManager, _initConfig.RemovePendingTransactionInterval,
-                _initConfig.PeerNotificationThreshold);
+                new PendingTxThresholdValidator(_txPoolConfig.ObsoletePendingTransactionInterval,
+                    _txPoolConfig.RemovePendingTransactionInterval), new Timestamp(),
+                _ethereumEcdsa, _specProvider, _logManager, _txPoolConfig.RemovePendingTransactionInterval,
+                _txPoolConfig.PeerNotificationThreshold);
             _receiptStorage = new PersistentReceiptStorage(_dbProvider.ReceiptsDb, _specProvider, _logManager);
 
 //            IDbProvider debugRecorder = new RocksDbProvider(Path.Combine(_dbBasePath, "debug"), dbConfig);
@@ -518,7 +523,6 @@ namespace Nethermind.Runner.Runners
                 storageProvider,
                 _txPool,
                 _receiptStorage,
-                _configProvider.GetConfig<ISyncConfig>(),
                 _logManager);
 
             _blockchainProcessor = new BlockchainProcessor(
@@ -564,21 +568,23 @@ namespace Nethermind.Runner.Runners
                 _blockProducer.Start();
             }
 
-            if (!HiveEnabled)
+            _blockchainProcessor.Start();
+            LoadGenesisBlock(_chainSpec, string.IsNullOrWhiteSpace(_initConfig.GenesisHash) ? null : new Keccak(_initConfig.GenesisHash), _blockTree, stateProvider, _specProvider);
+            if (_initConfig.ProcessingEnabled)
             {
-                _blockchainProcessor.Start();
-                LoadGenesisBlock(_chainSpec, string.IsNullOrWhiteSpace(_initConfig.GenesisHash) ? null : new Keccak(_initConfig.GenesisHash), _blockTree, stateProvider, _specProvider);
-                if (_initConfig.ProcessingEnabled)
-                {
 #pragma warning disable 4014
-                    LoadBlocksFromDb();
+                LoadBlocksFromDb();
 #pragma warning restore 4014
-                }
-                else
-                {
-                    if (_logger.IsWarn) _logger.Warn($"Shutting down the blockchain processor due to {nameof(InitConfig)}.{nameof(InitConfig.ProcessingEnabled)} set to false");
-                    await _blockchainProcessor.StopAsync();
-                }
+            }
+            else
+            {
+                if (_logger.IsWarn) _logger.Warn($"Shutting down the blockchain processor due to {nameof(InitConfig)}.{nameof(InitConfig.ProcessingEnabled)} set to false");
+                await _blockchainProcessor.StopAsync();
+            }
+
+            if (HiveEnabled)
+            {
+                await InitHive();
             }
 
             await InitializeNetwork();
@@ -609,7 +615,8 @@ namespace Nethermind.Runner.Runners
 
         private async Task InitializeNetwork()
         {
-            _syncPeerPool = new EthSyncPeerPool(_blockTree, _nodeStatsManager, _syncConfig, _logManager);
+            var maxPeersCount = _configProvider.GetConfig<INetworkConfig>().ActivePeersMaxCount;
+            _syncPeerPool = new EthSyncPeerPool(_blockTree, _nodeStatsManager, _syncConfig, maxPeersCount, _logManager);
             NodeDataFeed feed = new NodeDataFeed(_dbProvider.CodeDb, _dbProvider.StateDb, _logManager);
             NodeDataDownloader nodeDataDownloader = new NodeDataDownloader(_syncPeerPool, feed, _logManager);
             _synchronizer = new Synchronizer(_specProvider, _blockTree, _receiptStorage, _blockValidator, _sealValidator, _syncPeerPool, _syncConfig, nodeDataDownloader, _logManager);
@@ -633,7 +640,6 @@ namespace Nethermind.Runner.Runners
                     _logger.Error("Unable to init the peer manager.", initPeerTask.Exception);
                 }
             });
-            ;
 
             await StartSync().ContinueWith(initNetTask =>
             {
@@ -660,8 +666,6 @@ namespace Nethermind.Runner.Runners
                 _logger.Error("Unable to start the peer manager.", e);
             }
 
-            ;
-
             if (_logger.IsInfo) _logger.Info($"Ethereum     : tcp://{_enode.IpAddress}:{_enode.P2PPort}");
             if (_logger.IsInfo) _logger.Info($"Version      : {ClientVersion.Description}");
             if (_logger.IsInfo) _logger.Info($"This node    : {_enode.Info}");
@@ -681,9 +685,14 @@ namespace Nethermind.Runner.Runners
                 return;
             }
 
-            foreach ((Address address, UInt256 balance) in chainSpec.Allocations)
+            foreach ((Address address, (UInt256 balance, byte[] code)) in chainSpec.Allocations)
             {
                 stateProvider.CreateAccount(address, balance);
+                if (code != null)
+                {
+                    Keccak codeHash = stateProvider.UpdateCode(code);
+                    stateProvider.UpdateCodeHash(address, codeHash, specProvider.GenesisSpec);
+                }
             }
 
             stateProvider.Commit(specProvider.GenesisSpec);
@@ -746,6 +755,8 @@ namespace Nethermind.Runner.Runners
                 _cryptoRandom, new Ecdsa(), _nodeKey, _logManager);
 
             var networkConfig = _configProvider.GetConfig<INetworkConfig>();
+            var discoveryConfig = _configProvider.GetConfig<IDiscoveryConfig>();
+
             _sessionMonitor = new SessionMonitor(networkConfig, _logManager);
             _rlpxPeer = new RlpxPeer(
                 _nodeKey.PublicKey,
@@ -756,12 +767,16 @@ namespace Nethermind.Runner.Runners
 
             await _rlpxPeer.Init();
 
-            var peerStorage = new NetworkStorage(PeersDbPath, networkConfig, _logManager, _perfService);
+            _staticNodesManager = new StaticNodesManager(_initConfig.StaticNodesPath, _logManager);
+            await _staticNodesManager.InitAsync();
+
+            var peersDb = new SimpleFilePublicKeyDb(PeersDbPath, _logManager);
+            var peerStorage = new NetworkStorage(peersDb, _logManager);
 
             ProtocolValidator protocolValidator = new ProtocolValidator(_nodeStatsManager, _blockTree, _logManager);
             _protocolsManager = new ProtocolsManager(_syncPeerPool, _syncServer, _txPool, _discoveryApp, _messageSerializationService, _rlpxPeer, _nodeStatsManager, protocolValidator, peerStorage, _perfService, _logManager);
-            PeerLoader peerLoader = new PeerLoader(networkConfig, _nodeStatsManager, peerStorage, _logManager);
-            _peerManager = new PeerManager(_rlpxPeer, _discoveryApp, _nodeStatsManager, peerStorage, peerLoader, networkConfig, _logManager);
+            PeerLoader peerLoader = new PeerLoader(networkConfig, discoveryConfig, _nodeStatsManager, peerStorage, _logManager);
+            _peerManager = new PeerManager(_rlpxPeer, _discoveryApp, _nodeStatsManager, peerStorage, peerLoader, networkConfig, _logManager, _staticNodesManager);
             _peerManager.Init();
         }
 
@@ -786,8 +801,8 @@ namespace Nethermind.Runner.Runners
                 return;
             }
 
-            INetworkConfig networkConfig = _configProvider.GetConfig<INetworkConfig>();
-            networkConfig.MasterPort = _initConfig.DiscoveryPort;
+            IDiscoveryConfig discoveryConfig = _configProvider.GetConfig<IDiscoveryConfig>();
+            discoveryConfig.MasterPort = _initConfig.DiscoveryPort;
 
             var privateKeyProvider = new SameKeyGenerator(_nodeKey);
             var discoveryMessageFactory = new DiscoveryMessageFactory(_timestamp);
@@ -802,12 +817,10 @@ namespace Nethermind.Runner.Runners
 
             msgSerializersProvider.RegisterDiscoverySerializers();
 
-            var nodeDistanceCalculator = new NodeDistanceCalculator(networkConfig);
+            var nodeDistanceCalculator = new NodeDistanceCalculator(discoveryConfig);
 
-            var nodeTable = new NodeTable(
-                _keyStore,
-                nodeDistanceCalculator,
-                networkConfig,
+            var nodeTable = new NodeTable(nodeDistanceCalculator,
+                discoveryConfig,
                 _logManager);
 
             var evictionManager = new EvictionManager(
@@ -819,26 +832,25 @@ namespace Nethermind.Runner.Runners
                 discoveryMessageFactory,
                 evictionManager,
                 _nodeStatsManager,
-                networkConfig,
+                discoveryConfig,
                 _logManager);
 
+            var discoveryDb = new SimpleFilePublicKeyDb(DiscoveryNodesDbPath, _logManager);
             var discoveryStorage = new NetworkStorage(
-                DiscoveryNodesDbPath,
-                networkConfig,
-                _logManager,
-                _perfService);
+                discoveryDb,
+                _logManager);
 
             var discoveryManager = new DiscoveryManager(
                 nodeLifeCycleFactory,
                 nodeTable,
                 discoveryStorage,
-                networkConfig,
+                discoveryConfig,
                 _logManager);
 
             var nodesLocator = new NodesLocator(
                 nodeTable,
                 discoveryManager,
-                _configProvider,
+                discoveryConfig,
                 _logManager);
 
             _discoveryApp = new DiscoveryApp(
@@ -848,7 +860,7 @@ namespace Nethermind.Runner.Runners
                 _messageSerializationService,
                 _cryptoRandom,
                 discoveryStorage,
-                networkConfig,
+                discoveryConfig,
                 _timestamp,
                 _logManager, _perfService);
 
@@ -872,8 +884,7 @@ namespace Nethermind.Runner.Runners
         private async Task InitHive()
         {
             if (_logger.IsInfo) _logger.Info("Initializing Hive");
-            _hiveRunner = new HiveRunner(_jsonSerializer, _blockchainProcessor, _blockTree as BlockTree,
-                _stateProvider, _dbProvider.StateDb, _logger, _configProvider, _specProvider, _wallet as HiveWallet);
+            _hiveRunner = new HiveRunner(_blockTree as BlockTree, _wallet as HiveWallet, _jsonSerializer, _configProvider, _logger);
             await _hiveRunner.Start();
         }
 
@@ -899,7 +910,7 @@ namespace Nethermind.Runner.Runners
             var protocol = _syncConfig.FastSync ? "eth/63" : "eth/62";
             var ethStatsClient = new EthStatsClient(config.Server, reconnectionInterval, sender, _logManager);
             var ethStatsIntegration = new EthStatsIntegration(config.Name, node, port, network, protocol, api, client,
-                config.Contact, canUpdateHistory, config.Secret, ethStatsClient, sender, _blockProcessor, _peerManager,
+                config.Contact, canUpdateHistory, config.Secret, ethStatsClient, sender, _blockTree, _peerManager,
                 _logManager);
             Task.Run(() => ethStatsIntegration.InitAsync());
         }

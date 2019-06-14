@@ -273,19 +273,19 @@ namespace Nethermind.Blockchain.Test.Synchronization
 
             var rewardCalculator = new RewardCalculator(specProvider);
             var txProcessor = new TransactionProcessor(specProvider, stateProvider, storageProvider, virtualMachine, logManager);
-            var blockProcessor = new BlockProcessor(specProvider, blockValidator, rewardCalculator, txProcessor, stateDb, codeDb, traceDb, stateProvider, storageProvider, txPool, receiptStorage, syncConfig, logManager);
+            var blockProcessor = new BlockProcessor(specProvider, blockValidator, rewardCalculator, txProcessor, stateDb, codeDb, traceDb, stateProvider, storageProvider, txPool, receiptStorage, logManager);
 
             var step = new TxSignaturesRecoveryStep(ecdsa, txPool, logManager);
             var processor = new BlockchainProcessor(tree, blockProcessor, step, logManager, true, true);
 
             var nodeStatsManager = new NodeStatsManager(new StatsConfig(), logManager);
-            var syncPeerPool = new EthSyncPeerPool(tree, nodeStatsManager, syncConfig, logManager);
+            var syncPeerPool = new EthSyncPeerPool(tree, nodeStatsManager, syncConfig, 25, logManager);
 
             StateProvider devState = new StateProvider(stateDb, codeDb, logManager);
             StorageProvider devStorage = new StorageProvider(stateDb, devState, logManager);
             var devEvm = new VirtualMachine(devState, devStorage, blockhashProvider, logManager);
             var devTxProcessor = new TransactionProcessor(specProvider, devState, devStorage, devEvm, logManager);
-            var devBlockProcessor = new BlockProcessor(specProvider, blockValidator, rewardCalculator, devTxProcessor, stateDb, codeDb, traceDb, devState, devStorage, txPool, receiptStorage, syncConfig, logManager);
+            var devBlockProcessor = new BlockProcessor(specProvider, blockValidator, rewardCalculator, devTxProcessor, stateDb, codeDb, traceDb, devState, devStorage, txPool, receiptStorage, logManager);
             var devChainProcessor = new BlockchainProcessor(tree, devBlockProcessor, step, logManager, false, false);
             var producer = new DevBlockProducer(txPool, devChainProcessor, tree, new Timestamp(), logManager);
 

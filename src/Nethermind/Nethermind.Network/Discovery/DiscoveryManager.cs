@@ -21,26 +21,22 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
-using Nethermind.Config;
 using Nethermind.Core;
 using Nethermind.Core.Crypto;
 using Nethermind.Core.Extensions;
-using Nethermind.Core.Model;
 using Nethermind.Logging;
 using Nethermind.Network.Config;
 using Nethermind.Network.Discovery.Lifecycle;
 using Nethermind.Network.Discovery.Messages;
 using Nethermind.Network.Discovery.RoutingTable;
-using Nethermind.Stats;
 using Nethermind.Stats.Model;
 
 namespace Nethermind.Network.Discovery
 {
     public class DiscoveryManager : IDiscoveryManager
     {
-        private readonly INetworkConfig _configurationProvider;
+        private readonly IDiscoveryConfig _discoveryConfig;
         private readonly ILogger _logger;
         private readonly INodeLifecycleManagerFactory _nodeLifecycleManagerFactory;
         private readonly ConcurrentDictionary<Keccak, INodeLifecycleManager> _nodeLifecycleManagers = new ConcurrentDictionary<Keccak, INodeLifecycleManager>();
@@ -54,11 +50,11 @@ namespace Nethermind.Network.Discovery
             INodeLifecycleManagerFactory nodeLifecycleManagerFactory,
             INodeTable nodeTable,
             INetworkStorage discoveryStorage,
-            INetworkConfig networkConfig,
+            IDiscoveryConfig discoveryConfig,
             ILogManager logManager)
         {
             _logger = logManager.GetClassLogger() ?? throw new ArgumentNullException(nameof(logManager));
-            _configurationProvider = networkConfig ?? throw new ArgumentNullException(nameof(networkConfig));
+            _discoveryConfig = discoveryConfig ?? throw new ArgumentNullException(nameof(discoveryConfig));
             _nodeLifecycleManagerFactory = nodeLifecycleManagerFactory ?? throw new ArgumentNullException(nameof(nodeLifecycleManagerFactory));
             _nodeTable = nodeTable ?? throw new ArgumentNullException(nameof(nodeTable));
             _discoveryStorage = discoveryStorage ?? throw new ArgumentNullException(nameof(discoveryStorage));
@@ -231,12 +227,12 @@ namespace Nethermind.Network.Discovery
 
         private void CleanUpLifecycleManagers()
         {
-            if (_nodeLifecycleManagers.Count <= _configurationProvider.MaxNodeLifecycleManagersCount)
+            if (_nodeLifecycleManagers.Count <= _discoveryConfig.MaxNodeLifecycleManagersCount)
             {
                 return;
             }
 
-            int cleanupCount = _configurationProvider.NodeLifecycleManagersCleanupCount;
+            int cleanupCount = _discoveryConfig.NodeLifecycleManagersCleanupCount;
             var activeExcluded = _nodeLifecycleManagers.Where(x => x.Value.State == NodeLifecycleState.ActiveExcluded).Take(cleanupCount).ToArray();
             if (activeExcluded.Length == cleanupCount)
             {
@@ -286,7 +282,7 @@ namespace Nethermind.Network.Discovery
             public override bool Equals(object obj)
             {
                 if (ReferenceEquals(null, obj)) return false;
-                return obj is MessageTypeKey && Equals((MessageTypeKey)obj);
+                return obj is MessageTypeKey key && Equals(key);
             }
 
             [SuppressMessage("ReSharper", "NonReadonlyMemberInGetHashCode")]

@@ -28,7 +28,10 @@ using Nethermind.JsonRpc;
 using Nethermind.JsonRpc.Modules;
 using Nethermind.JsonRpc.Modules.Web3;
 using Nethermind.JsonRpc.WebSockets;
+using Nethermind.Monitoring;
+using Nethermind.Monitoring.Metrics;
 using Nethermind.Logging;
+using Nethermind.Monitoring.Config;
 using Nethermind.Runner.Config;
 using Nethermind.Runner.Runners;
 using Nethermind.WebSockets;
@@ -41,6 +44,7 @@ namespace Nethermind.Runner
         private IRunner _jsonRpcRunner = NullRunner.Instance;
         private IRunner _ethereumRunner = NullRunner.Instance;
         private TaskCompletionSource<object> _cancelKeySource;
+        private IMonitoringService _monitoringService;
         
         protected RunnerAppBase(ILogger logger)
         {
@@ -68,10 +72,6 @@ namespace Nethermind.Runner
             {
                 var configProvider = buildConfigProvider();
                 var initConfig = configProvider.GetConfig<IInitConfig>();
-                if (initConfig.RemovingLogFilesEnabled)
-                {
-                    RemoveLogFiles(initConfig.LogDirectory);
-                }
 
                 Logger = new NLogLogger(initConfig.LogFileName, initConfig.LogDirectory);
                 LogMemoryConfiguration();
@@ -118,6 +118,7 @@ namespace Nethermind.Runner
         protected async Task StartRunners(IConfigProvider configProvider)
         {
             var initParams = configProvider.GetConfig<IInitConfig>();
+            var metricsParams = configProvider.GetConfig<IMetricsConfig>();
             var logManager = new NLogManager(initParams.LogFileName, initParams.LogDirectory);
             IRpcModuleProvider rpcModuleProvider = initParams.JsonRpcEnabled
                 ? new RpcModuleProvider(configProvider.GetConfig<IJsonRpcConfig>())
@@ -133,7 +134,7 @@ namespace Nethermind.Runner
             if (initParams.JsonRpcEnabled)
             {
                 var serializer = new EthereumJsonSerializer();
-                rpcModuleProvider.Register<IWeb3Module>(new Web3Module(configProvider, logManager, serializer));
+                rpcModuleProvider.Register<IWeb3Module>(new Web3Module(logManager));
                 var jsonRpcService = new JsonRpcService(rpcModuleProvider, logManager);
                 var jsonRpcProcessor = new JsonRpcProcessor(jsonRpcService, serializer, logManager);
                 webSocketsManager.AddModule(new JsonRpcWebSocketsModule(jsonRpcProcessor, serializer));
@@ -151,41 +152,32 @@ namespace Nethermind.Runner
             {
                 if (Logger.IsInfo) Logger.Info("Json RPC is disabled");
             }
+
+            if (metricsParams.MetricsEnabled)
+            {
+                var intervalSeconds = metricsParams.MetricsIntervalSeconds;
+                _monitoringService = new MonitoringService(new MetricsUpdater(intervalSeconds),
+                    metricsParams.MetricsPushGatewayUrl, ClientVersion.Description,
+                    metricsParams.NodeName, intervalSeconds, logManager);
+                await _monitoringService.StartAsync().ContinueWith(x =>
+                {
+                    if (x.IsFaulted && Logger.IsError) Logger.Error("Error during starting a monitoring.", x.Exception);
+                });
+            }
+            else
+            {
+                if (Logger.IsInfo) Logger.Info("Monitoring is disabled");
+            }
         }
 
         protected abstract (CommandLineApplication, Func<IConfigProvider>, Func<string>) BuildCommandLineApp();
 
         protected async Task StopAsync()
         {
+            _monitoringService?.StopAsync();
             _jsonRpcRunner?.StopAsync(); // do not await
             var ethereumTask = _ethereumRunner?.StopAsync() ?? Task.CompletedTask;
             await ethereumTask;
-        }
-
-        private void RemoveLogFiles(string logDirectory)
-        {
-            Console.WriteLine("Removing log files.");
-
-            var logsDir = string.IsNullOrEmpty(logDirectory)
-                ? Path.Combine(PathUtils.GetExecutingDirectory(), "logs")
-                : logDirectory;
-            if (!Directory.Exists(logsDir))
-            {
-                return;
-            }
-
-            var files = Directory.GetFiles(logsDir);
-            foreach (string file in files)
-            {
-                try
-                {
-                    File.Delete(file);
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine($"Error removing log file: {file}, exp: {e}");
-                }
-            }
         }
     }
 }

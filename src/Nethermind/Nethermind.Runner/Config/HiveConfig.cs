@@ -16,17 +16,12 @@
  * along with the Nethermind. If not, see <http://www.gnu.org/licenses/>.
  */
 
-using System.Numerics;
-
 namespace Nethermind.Runner.Config
 {
     public class HiveConfig : IHiveConfig
     {
-        public string ChainFile { get; set; }
-        public string BlocksDir { get; set; }
-        public string KeysDir { get; set; }
-        public BigInteger? HomesteadBlockNr { get; set; }
-        public string Bootnode { get; set; }
-        public string GenesisFilePath { get; set; }
+        public string ChainFile { get; set; } = "/chain.rlp";
+        public string BlocksDir { get; set; } = "/blocks";
+        public string KeysDir { get; set; } = "/keys";
     }
 }

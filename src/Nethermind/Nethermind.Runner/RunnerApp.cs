@@ -34,6 +34,8 @@ using Nethermind.Stats;
 using NLog;
 using ILogger = Nethermind.Logging.ILogger;
 using LogLevel = Nethermind.Logging.LogLevel;
+using Nethermind.Monitoring;
+using Nethermind.Monitoring.Config;
 
 namespace Nethermind.Runner
 {
@@ -54,7 +56,8 @@ namespace Nethermind.Runner
             typeof(DbConfig),
             typeof(StatsConfig),
             typeof(SyncConfig),
-            typeof(EthStatsConfig)
+            typeof(EthStatsConfig),
+            typeof(MetricsConfig)
         };
 
         [Todo("find better way to enforce assemblies with config impl are loaded")]

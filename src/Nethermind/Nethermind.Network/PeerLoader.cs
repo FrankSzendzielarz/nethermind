@@ -30,37 +30,52 @@ namespace Nethermind.Network
     public class PeerLoader : IPeerLoader
     {
         private readonly INetworkConfig _networkConfig;
+        private readonly IDiscoveryConfig _discoveryConfig;
         private readonly INodeStatsManager _stats;
         private readonly INetworkStorage _peerStorage;
         private readonly ILogger _logger;
 
-        public PeerLoader(INetworkConfig networkConfig, INodeStatsManager stats, INetworkStorage peerStorage, ILogManager logManager)
+        public PeerLoader(INetworkConfig networkConfig, IDiscoveryConfig discoveryConfig, INodeStatsManager stats, INetworkStorage peerStorage, ILogManager logManager)
         {
-            _networkConfig = networkConfig ?? throw new ArgumentNullException(nameof(networkConfig));
+            _logger = logManager.GetClassLogger() ?? throw new ArgumentNullException(nameof(logManager));
             _stats = stats ?? throw new ArgumentNullException(nameof(stats));
             _peerStorage = peerStorage ?? throw new ArgumentNullException(nameof(peerStorage));
-            _logger = logManager.GetClassLogger();
+            _networkConfig = networkConfig ?? throw new ArgumentNullException(nameof(networkConfig));
+            _discoveryConfig = discoveryConfig ?? throw new ArgumentNullException(nameof(discoveryConfig));
         }
 
-        public List<Peer> LoadPeers()
+        public List<Peer> LoadPeers(IEnumerable<NetworkNode> staticNodes = null)
         {
             List<Peer> allPeers = new List<Peer>();
             LoadPeersFromDb(allPeers);
-            LoadConfigPeers(allPeers, _networkConfig.Bootnodes, n =>
+            
+            LoadConfigPeers(allPeers, _discoveryConfig.Bootnodes, n =>
             {
                 n.IsBootnode = true;
-                if(_logger.IsInfo) _logger.Info($"Bootnode     : {n}");
+                if (_logger.IsInfo) _logger.Info($"Bootnode     : {n}");
             });
+            
             LoadConfigPeers(allPeers, _networkConfig.StaticPeers, n =>
             {
                 n.IsStatic = true;
-                if(_logger.IsInfo) _logger.Info($"Static node  : {n}");
+                if (_logger.IsInfo) _logger.Info($"Static node  : {n}");
             });
+            
             LoadConfigPeers(allPeers, _networkConfig.TrustedPeers, n =>
             {
                 n.IsTrusted = true;
-                if(_logger.IsInfo) _logger.Info($"Trusted node : {n}");
+                if (_logger.IsInfo) _logger.Info($"Trusted node : {n}");
             });
+            
+            if (!(staticNodes is null))
+            {
+                LoadConfigPeers(allPeers, staticNodes, n =>
+                {
+                    n.IsStatic = true;
+                    if (_logger.IsInfo) _logger.Info($"Static node : {n}");
+                });
+            }
+
             return allPeers;
         }
 
@@ -104,7 +119,12 @@ namespace Nethermind.Network
                 return;
             }
 
-            foreach (var networkNode in NetworkNode.ParseNodes(enodesString, _logger))
+            LoadConfigPeers(peers, NetworkNode.ParseNodes(enodesString, _logger), nodeUpdate);
+        }
+
+        private void LoadConfigPeers(List<Peer> peers, IEnumerable<NetworkNode> networkNodes, Action<Node> nodeUpdate)
+        {
+            foreach (var networkNode in networkNodes)
             {
                 var node = new Node(networkNode.NodeId, networkNode.Host, networkNode.Port);
                 nodeUpdate.Invoke(node);

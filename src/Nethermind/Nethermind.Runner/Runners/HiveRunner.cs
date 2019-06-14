@@ -16,24 +16,19 @@
  * along with the Nethermind. If not, see <http://www.gnu.org/licenses/>.
  */
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Nethermind.Blockchain;
 using Nethermind.Config;
 using Nethermind.Core;
-using Nethermind.Core.Crypto;
 using Nethermind.Core.Encoding;
-using Nethermind.Core.Extensions;
-using Nethermind.Core.Specs;
-using Nethermind.Dirichlet.Numerics;
 using Nethermind.KeyStore;
-using Nethermind.KeyStore.Config;
 using Nethermind.Logging;
 using Nethermind.Runner.Config;
-using Nethermind.Runner.Data;
-using Nethermind.Store;
 using Nethermind.Wallet;
 
 namespace Nethermind.Runner.Runners
@@ -42,40 +37,67 @@ namespace Nethermind.Runner.Runners
     {
         private readonly IJsonSerializer _jsonSerializer;
         private readonly IBlockTree _blockTree;
-        private readonly IBlockchainProcessor _blockchainProcessor;
-        private readonly IStateProvider _stateProvider;
-        private readonly ISnapshotableDb _stateDb;
-        private readonly ISpecProvider _specProvider;
         private readonly HiveWallet _wallet;
         private readonly ILogger _logger;
         private readonly IConfigProvider _configurationProvider;
 
-        public HiveRunner(IJsonSerializer jsonSerializer, IBlockchainProcessor blockchainProcessor,
-            IBlockTree blockTree, IStateProvider stateProvider, ISnapshotableDb stateDb, ILogger logger,
-            IConfigProvider configurationProvider, ISpecProvider specProvider, HiveWallet wallet)
+        public HiveRunner(IBlockTree blockTree,
+            HiveWallet wallet,
+            IJsonSerializer jsonSerializer,
+            IConfigProvider configurationProvider,
+            ILogger logger)
         {
-            _jsonSerializer = jsonSerializer;
-            _blockchainProcessor = blockchainProcessor;
-            _blockTree = blockTree;
-            _stateProvider = stateProvider;
-            _stateDb = stateDb;
-            _logger = logger;
-            _configurationProvider = configurationProvider;
-            _specProvider = specProvider;
-            _wallet = wallet;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _wallet = wallet ?? throw new ArgumentNullException(nameof(wallet));
+            _blockTree = blockTree ?? throw new ArgumentNullException(nameof(blockTree));
+            _jsonSerializer = jsonSerializer ?? throw new ArgumentNullException(nameof(jsonSerializer));
+            _configurationProvider = configurationProvider ?? throw new ArgumentNullException(nameof(configurationProvider));
         }
 
         public Task Start()
         {
-            _logger.Info("Ethereum");
-            var initConfig = _configurationProvider.GetConfig<IHiveConfig>();
-            _blockchainProcessor.Start();
-            InitializeKeys(initConfig.KeysDir);
-            InitializeGenesis(initConfig.GenesisFilePath);
-            InitializeChain(initConfig.ChainFile);
-            InitializeBlocks(initConfig.BlocksDir);
-            _logger.Info("Ethereum initialization completed");
+            _logger.Info("HIVE initialization starting");
+            _blockTree.NewHeadBlock += BlockTreeOnNewHeadBlock;
+            var hiveConfig = _configurationProvider.GetConfig<IHiveConfig>();
+            ListEnvironmentVariables();
+            InitializeKeys(hiveConfig.KeysDir);
+            InitializeChain(hiveConfig.ChainFile);
+            InitializeBlocks(hiveConfig.BlocksDir);
+            _blockTree.NewHeadBlock -= BlockTreeOnNewHeadBlock;
+            _logger.Info("HIVE initialization completed");
             return Task.CompletedTask;
+        }
+
+        private void BlockTreeOnNewHeadBlock(object sender, BlockEventArgs e)
+        {
+            _logger.Info($"HIVE new head block {e.Block.ToString(Block.Format.Short)}");
+        }
+
+        private void ListEnvironmentVariables()
+        {
+// # This script assumes the following environment variables:
+// #  - HIVE_BOOTNODE       enode URL of the remote bootstrap node
+// #  - HIVE_NETWORK_ID     network ID number to use for the eth protocol
+// #  - HIVE_CHAIN_ID     network ID number to use for the eth protocol
+// #  - HIVE_TESTNET        whether testnet nonces (2^20) are needed
+// #  - HIVE_NODETYPE       sync and pruning selector (archive, full, light)
+// #  - HIVE_FORK_HOMESTEAD block number of the DAO hard-fork transition
+// #  - HIVE_FORK_DAO_BLOCK block number of the DAO hard-fork transitionnsition
+// #  - HIVE_FORK_DAO_VOTE  whether the node support (or opposes) the DAO fork
+// #  - HIVE_FORK_TANGERINE block number of TangerineWhistle
+// #  - HIVE_FORK_SPURIOUS  block number of SpuriousDragon
+// #  - HIVE_FORK_BYZANTIUM block number for Byzantium transition
+// #  - HIVE_FORK_CONSTANTINOPLE block number for Constantinople transition
+// #  - HIVE_FORK_PETERSBURG  block number for ConstantinopleFix/PetersBurg transition
+// #  - HIVE_MINER          address to credit with mining rewards (single thread)
+// #  - HIVE_MINER_EXTRA    extra-data field to set for newly minted blocks
+// #  - HIVE_SKIP_POW       If set, skip PoW verification during block import
+
+            string[] variableNames = {"HIVE_CHAIN_ID", "HIVE_BOOTNODE", "HIVE_TESTNET", "HIVE_NODETYPE", "HIVE_FORK_HOMESTEAD", "HIVE_FORK_DAO_BLOCK", "HIVE_FORK_DAO_VOTE", "HIVE_FORK_TANGERINE", "HIVE_FORK_SPURIOUS", "HIVE_FORK_METROPOLIS", "HIVE_FORK_BYZANTIUM", "HIVE_FORK_CONSTANTINOPLE", "HIVE_FORK_PETERSBURG", "HIVE_MINER", "HIVE_MINER_EXTRA"};
+            foreach (string variableName in variableNames)
+            {
+                if(_logger.IsInfo) _logger.Info($"{variableName}: {Environment.GetEnvironmentVariable(variableName)}");
+            }
         }
 
         public async Task StopAsync()
@@ -87,22 +109,28 @@ namespace Nethermind.Runner.Runners
         {
             if (!File.Exists(chainFile))
             {
-                _logger.Info($"Chain file does not exist: {chainFile}, skipping");
+                if (_logger.IsInfo) _logger.Info($"HIVE Chain file does not exist: {chainFile}, skipping");
                 return;
             }
 
             var chainFileContent = File.ReadAllBytes(chainFile);
             var context = new Rlp.DecoderContext(chainFileContent);
             var blocks = new List<Block>();
+            
+            if (_logger.IsInfo) _logger.Info($"HIVE Loading blocks from {chainFile}");
             while (context.ReadNumberOfItemsRemaining() > 0)
             {
                 context.PeekNextItem();
-                blocks.Add(Rlp.Decode<Block>(context));
+                Block block = Rlp.Decode<Block>(context);
+                if (_logger.IsInfo) _logger.Info($"HIVE Reading a chain.rlp block {block.ToString(Block.Format.Short)}");
+                blocks.Add(block);
             }
-            
+
             for (int i = 0; i < blocks.Count; i++)
             {
-                ProcessBlock(blocks[i]);
+                Block block = blocks[i];
+                if (_logger.IsInfo) _logger.Info($"HIVE Processing a chain.rlp block {block.ToString(Block.Format.Short)}");
+                ProcessBlock(block);
             }
         }
 
@@ -110,15 +138,16 @@ namespace Nethermind.Runner.Runners
         {
             if (!Directory.Exists(blocksDir))
             {
-                _logger.Info($"Blocks dir does not exist: {blocksDir}, skipping");
+                if (_logger.IsInfo) _logger.Info($"HIVE Blocks dir does not exist: {blocksDir}, skipping");
                 return;
             }
 
+            if (_logger.IsInfo) _logger.Info($"HIVE Loading blocks from {blocksDir}");
             var files = Directory.GetFiles(blocksDir).OrderBy(x => x).ToArray();
-            var blocks = files.Select(x => new { File = x, Block = DecodeBlock(x) }).OrderBy(x => x.Block.Header.Number).ToArray();
+            var blocks = files.Select(x => new {File = x, Block = DecodeBlock(x)}).OrderBy(x => x.Block.Header.Number).ToArray();
             foreach (var block in blocks)
             {
-                _logger.Info($"Processing block file: {block.File}, blockNumber: {block.Block.Header.Number}");
+                if (_logger.IsInfo) _logger.Info($"HIVE Processing block file: {block.File} - {block.Block.ToString(Block.Format.Short)}");
                 ProcessBlock(block.Block);
             }
         }
@@ -127,7 +156,7 @@ namespace Nethermind.Runner.Runners
         {
             var fileContent = File.ReadAllBytes(file);
             var blockRlp = new Rlp(fileContent);
-            
+
             return Rlp.Decode<Block>(blockRlp);
         }
 
@@ -136,10 +165,11 @@ namespace Nethermind.Runner.Runners
             try
             {
                 _blockTree.SuggestBlock(block);
+                if (_logger.IsInfo) _logger.Info($"HIVE suggested {block.ToString(Block.Format.Short)}, now best suggested header {_blockTree.BestSuggestedHeader}, head {_blockTree.Head.ToString(BlockHeader.Format.Short)}");
             }
             catch (InvalidBlockException e)
             {
-                _logger.Error($"Invalid block: {block.Hash}, ignoring", e);
+                _logger.Error($"HIVE Invalid block: {block.Hash}, ignoring", e);
             }
         }
 
@@ -147,86 +177,19 @@ namespace Nethermind.Runner.Runners
         {
             if (!Directory.Exists(keysDir))
             {
-                _logger.Info($"Keys dir does not exist: {keysDir}, skipping");
+                if (_logger.IsInfo) _logger.Info($"HIVE Keys dir does not exist: {keysDir}, skipping");
                 return;
             }
 
-            var keyStoreDir = GetStoreDirectory();
+            if (_logger.IsInfo) _logger.Info($"HIVE Loading keys from {keysDir}");
             var files = Directory.GetFiles(keysDir);
             foreach (var file in files)
             {
-                _logger.Info($"Processing key file: {file}");
+                if (_logger.IsInfo) _logger.Info($"HIVE Processing key file: {file}");
                 var fileContent = File.ReadAllText(file);
                 var keyStoreItem = _jsonSerializer.Deserialize<KeyStoreItem>(fileContent);
                 _wallet.Add(new Address(keyStoreItem.Address));
             }
-        }
-
-        private void InitializeGenesis(string genesisFile)
-        {
-            var genesisBlockRaw = File.ReadAllText(genesisFile);
-            var blockJson = _jsonSerializer.Deserialize<TestGenesisJson>(genesisBlockRaw);
-            var stateRoot = InitializeAccounts(blockJson.Alloc);
-            var block = Convert(blockJson, stateRoot);
-            _blockTree.SuggestBlock(block);
-        }
-
-        private static Block Convert(TestGenesisJson headerJson, Keccak stateRoot)
-        {
-            if (headerJson == null)
-            {
-                return null;
-            }
-
-            var header = new BlockHeader(
-                new Keccak(headerJson.ParentHash),
-                Keccak.OfAnEmptySequenceRlp,
-                new Address(headerJson.Coinbase),
-                Bytes.FromHexString(headerJson.Difficulty).ToUInt256(),
-                0,
-                (long) Bytes.FromHexString(headerJson.GasLimit).ToUnsignedBigInteger(),
-                Bytes.FromHexString(headerJson.Timestamp).ToUInt256(),
-                Bytes.FromHexString(headerJson.ExtraData)
-            )
-            {
-                Bloom = Bloom.Empty,
-                MixHash = new Keccak(headerJson.MixHash),
-                Nonce = (ulong) Bytes.FromHexString(headerJson.Nonce).ToUnsignedBigInteger(),               
-                ReceiptsRoot = Keccak.EmptyTreeHash,
-                StateRoot = Keccak.EmptyTreeHash,
-                TxRoot = Keccak.EmptyTreeHash
-            };
-
-            header.StateRoot = stateRoot;
-            header.Hash = BlockHeader.CalculateHash(header);
-
-            return new Block(header);
-        }
-
-        private Keccak InitializeAccounts(IDictionary<string, TestAccount> alloc)
-        {   
-            foreach (var account in alloc)
-            {
-                UInt256.CreateFromBigEndian(out UInt256 allocation, Bytes.FromHexString(account.Value.Balance));
-                _stateProvider.CreateAccount(new Address(account.Key), account.Value.Balance.StartsWith("0x") 
-                    ? allocation : UInt256.Parse(account.Value.Balance));
-            }
-            
-            _stateProvider.Commit(_specProvider.GenesisSpec);
-            _stateDb.Commit();
-            
-            return _stateProvider.StateRoot;
-        }
-
-        private string GetStoreDirectory()
-        {
-            var directory = _configurationProvider.GetConfig<IKeyStoreConfig>().KeyStoreDirectory;
-            if (!Directory.Exists(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            return directory;
         }
     }
 }

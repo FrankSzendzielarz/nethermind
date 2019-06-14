@@ -34,6 +34,9 @@ namespace Nethermind.Blockchain.Synchronization
 {
     public class EthSyncPeerPool : IEthSyncPeerPool
     {
+        private const decimal _minDiffPercentageForLatencySwitch = 0.10m;
+        private const int _minDiffForLatencySwitch = 5;
+        
         private readonly IBlockTree _blockTree;
         private readonly INodeStatsManager _stats;
         private readonly ISyncConfig _syncConfig;
@@ -82,13 +85,14 @@ namespace Nethermind.Blockchain.Synchronization
             }
         }
 
-        public EthSyncPeerPool(IBlockTree blockTree, INodeStatsManager nodeStatsManager, ISyncConfig syncConfig, ILogManager logManager)
+        public EthSyncPeerPool(IBlockTree blockTree, INodeStatsManager nodeStatsManager, ISyncConfig syncConfig,
+            int peersMaxCount, ILogManager logManager)
         {
             _blockTree = blockTree ?? throw new ArgumentNullException(nameof(blockTree));
             _stats = nodeStatsManager ?? throw new ArgumentNullException(nameof(nodeStatsManager));
             _syncConfig = syncConfig ?? throw new ArgumentNullException(nameof(syncConfig));
+            PeerMaxCount = peersMaxCount;
             _logger = logManager.GetClassLogger() ?? throw new ArgumentNullException(nameof(logManager));
-
             _syncPeersReport = new SyncPeersReport(this, _stats, logManager);
         }
 
@@ -235,7 +239,7 @@ namespace Nethermind.Blockchain.Synchronization
                 return;
             }
 
-            if(_logger.IsTrace) _logger.Trace($"Reviewing {PeerCount} peer usefullness");
+            if(_logger.IsTrace) _logger.Trace($"Reviewing {PeerCount} peer usefulness");
 
             int peersDropped = 0;
             _lastUselessDrop = DateTime.UtcNow;
@@ -441,7 +445,7 @@ namespace Nethermind.Blockchain.Synchronization
 
         public int PeerCount => _peers.Count;
         public int UsefulPeerCount => UsefulPeers.Count();
-        public int PeerMaxCount => _syncConfig.SyncPeersMaxCount;
+        public int PeerMaxCount { get; }
 
         public void Refresh(PublicKey publicKey)
         {
@@ -592,8 +596,8 @@ namespace Nethermind.Blockchain.Synchronization
             var currentLatency = _stats.GetOrAdd(allocation.Current?.SyncPeer.Node)?.GetAverageLatency(NodeLatencyStatType.BlockHeaders) ?? 100000;
             var newLatency = _stats.GetOrAdd(peerInfo.SyncPeer.Node)?.GetAverageLatency(NodeLatencyStatType.BlockHeaders) ?? 100001;
 
-            if (newLatency / (decimal) Math.Max(1L, currentLatency) < 1m - _syncConfig.MinDiffPercentageForLatencySwitch / 100m
-                && newLatency < currentLatency - _syncConfig.MinDiffForLatencySwitch)
+            if (newLatency / (decimal) Math.Max(1L, currentLatency) < 1m - _minDiffPercentageForLatencySwitch
+                && newLatency < currentLatency - _minDiffForLatencySwitch)
             {
                 if (_logger.IsInfo) _logger.Info($"Sync peer substitution{Environment.NewLine}  OUT: {allocation.Current}[{currentLatency}]{Environment.NewLine}  IN : {peerInfo}[{newLatency}]");
                 allocation.ReplaceCurrent(peerInfo);

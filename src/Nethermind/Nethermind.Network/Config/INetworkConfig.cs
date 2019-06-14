@@ -22,184 +22,40 @@ namespace Nethermind.Network.Config
 {
     public interface INetworkConfig : IConfig
     {
-        /// <summary>
-        /// Kademlia - k
-        /// </summary>
-        int BucketSize { get; set; }
-
-        /// <summary>
-        /// Buckets count
-        /// </summary>
-        int BucketsCount { get; set; }
-
-        /// <summary>
-        /// Kademlia - alpha
-        /// </summary>
-        int Concurrency { get; }
-
-        /// <summary>
-        /// Kademlia - b
-        /// </summary>
-        int BitsPerHop { get; }
-
-        /// <summary>
-        /// Current Node host
-        /// </summary>
-        string MasterHost { get; set; }
-
-        /// <summary>
-        /// Current Node external ip
-        /// </summary>
-        string MasterExternalIp { get; set; }
-
-        /// <summary>
-        /// Current Node port
-        /// </summary>
-        int MasterPort { get; set; }
-
-        /// <summary>
-        /// Max Discovery Rounds
-        /// </summary>
-        int MaxDiscoveryRounds { get; }
-
-        /// <summary>
-        /// Eviction check interval in ms
-        /// </summary>
-        int EvictionCheckInterval { get; }
-
-        /// <summary>
-        /// Send Node Timeout in ms
-        /// </summary>
-        int SendNodeTimeout { get; }
-
-        /// <summary>
-        /// Pong Timeout in ms
-        /// </summary>
-        int PongTimeout { get; set; }
-
-        /// <summary>
-        /// Boot Node Pong Timeout in ms
-        /// </summary>
-        int BootnodePongTimeout { get; }
-
-        /// <summary>
-        /// Pong Timeout in ms
-        /// </summary>
-        int PingRetryCount { get; }
-
-        /// <summary>
-        /// Time between running discovery processes in milliseconds
-        /// </summary>
-        int DiscoveryInterval { get; }
-
-        /// <summary>
-        /// Time between persisting discovered nodes in milliseconds
-        /// </summary>
-        int DiscoveryPersistenceInterval { get; }
-
-        /// <summary>
-        /// Time between discovery cycles in milliseconds
-        /// </summary>
-        int DiscoveryNewCycleWaitTime { get; }
-
-        /// <summary>
-        /// Boot nodes connection details
-        /// </summary>
-        string Bootnodes { get; set; }
-
-        /// <summary>
-        /// Key Pass
-        /// </summary>
-        string KeyPass { get; }
-
-        /// <summary>
-        /// Timeout for closing UDP channel in milliseconds
-        /// </summary>
-        int UdpChannelCloseTimeout { get; }
-
-        /// <summary>
-        /// Version of the Ping message
-        /// </summary>
-        int PingMessageVersion { get; }
-
-        /// <summary>
-        /// Maximum count of NodeLifecycleManagers stored in memory
-        /// </summary>
-        int MaxNodeLifecycleManagersCount { get; }
-
-        /// <summary>
-        /// Count of NodeLifecycleManagers to remove in one cleanup cycle
-        /// </summary>
-        int NodeLifecycleManagersCleanupCount { get; }
-
-        /// <summary>
-        /// List of trusted nodes - we connect to them and set predefined high reputation
-        /// </summary>
+        [ConfigItem(Description = "Currently ignored.", DefaultValue = "null")]
         string TrustedPeers { get; set; }
         
-        /// <summary>
-        /// List of static nodes - we try to keep connection on all the time
-        /// </summary>
+        [ConfigItem(Description = "List of nodes for which we will keep the connection on. Static nodes are not counted to the max number of nodes limit.", DefaultValue = "null")]
         string StaticPeers { get; set; }
-
-        /// <summary>
-        /// Base path for discovery db
-        /// </summary>
-        string DbBasePath { get; set; } // TODO: move from Network config
-
-        /// <summary>
-        /// On/Off for discovery persistence
-        /// </summary>
-        bool IsDiscoveryNodesPersistenceOn { get; set; }
-
-        /// <summary>
-        /// On/Off for peers
-        /// </summary>
+        
+        [ConfigItem(Description = "If 'false' then discovered node list will be cleared on each restart.", DefaultValue = "true")]
         bool IsPeersPersistenceOn { get; set; }
 
-        /// <summary>
-        /// Max amount of active peers on the tcp level 
-        /// </summary>
+        [ConfigItem(Description = "Max number of connected peers.", DefaultValue = "25")]
         int ActivePeersMaxCount { get; }
 
-        /// <summary>
-        /// Time between persisting peers in milliseconds
-        /// </summary>
+        [ConfigItem(DefaultValue = "5000")]
         int PeersPersistenceInterval { get; set; }
         
-        /// <summary>
-        /// Time between persisting peers in milliseconds
-        /// </summary>
+        [ConfigItem(DefaultValue = "100")]
         int PeersUpdateInterval { get; set; }
 
-        /// <summary>
-        /// Time between sending p2p ping
-        /// </summary>
+        [ConfigItem(DefaultValue = "10000")]
         int P2PPingInterval { get; }
 
-        /// <summary>
-        /// Number of ping missed for disconnection
-        /// </summary>
+        [ConfigItem(DefaultValue = "3")]
         int P2PPingRetryCount { get; }
 
-        /// <summary>
-        /// Max Persisted Peer count
-        /// </summary>
+        [ConfigItem(DefaultValue = "2000")]
         int MaxPersistedPeerCount { get; }
         
-        /// <summary>
-        /// Persisted Peer Count Cleanup Threshold
-        /// </summary>
+        [ConfigItem(DefaultValue = "2200")]
         int PersistedPeerCountCleanupThreshold { get; set; }
         
-        /// <summary>
-        /// Max Candidate Peer count
-        /// </summary>
+        [ConfigItem(DefaultValue = "10000")]
         int MaxCandidatePeerCount { get; set; }
         
-        /// <summary>
-        /// Candidate Peer Count Cleanup Threshold
-        /// </summary>
+        [ConfigItem(DefaultValue = "11000")]
         int CandidatePeerCountCleanupThreshold { get; set; }
     }
 }
